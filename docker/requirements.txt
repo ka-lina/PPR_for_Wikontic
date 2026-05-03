@@ -1,0 +1,47 @@
+# Using lowest compatible versions to avoid conflicts
+# Based on torch 2.4.1 (lowest from both repos)
+
+# Core ML/DL (compatible with torch 2.4.1)
+transformers==4.45.2
+accelerate
+
+# APIs and LLMs
+openai==1.92.0
+litellm==1.73.1
+vllm==0.6.3.post1
+gritlm==1.0.2
+
+# Graph processing
+networkx
+python_igraph
+
+# Web/UI
+streamlit==1.40.1
+pyvis
+
+# Databases
+pymongo
+
+# Utilities
+tenacity==8.5.0
+tiktoken==0.7.0
+nest_asyncio
+numpy
+scipy
+tqdm
+einops
+boto3
+python-dotenv
+PyYAML
+unidecode
+pydantic==2.10.4
+tiktoken==0.7.0
+
+# LangChain (compatible versions)
+langchain
+langchain_openai
+
+# Other utilities
+pathlib
+typing
+dataclasses

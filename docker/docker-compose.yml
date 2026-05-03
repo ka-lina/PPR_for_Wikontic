@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # MongoDB for Wikontic
+  mongodb:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: wikontic-mongodb-dev
+    ports:
+      - "27018:27018"  # Expose to host for debugging
+    volumes:
+      - mongodb_data:/data/db  # Persist data between container restarts
+    environment:
+      - MONGODB_INITDB_ROOT_USERNAME=wikontic
+      - MONGODB_INITDB_ROOT_PASSWORD=wikontic123
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Main application
+  app:
+    build:
+      context: .
+      args:
+        CUDA_VERSION: ${CUDA_VERSION:-12.1.0}
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.10}
+    image: ppr-wikontic-dev:${CUDA_VERSION:-12.1.0}
+    container_name: wikontic-app-dev
+    runtime: nvidia
+    ports:
+      - "8501:8501"      # Streamlit
+      - "8888:8888"      # Jupyter (optional)
+    volumes:
+      # Mount your project directory for live code editing
+      - ${PWD}/..:/workspace/PPR_for_Wikontic:rw
+      # Also mount the repos so you can edit them too
+      - ${PWD}/../HippoRagu:/workspace/HippoRAG:rw
+      - ${PWD}/../Wikontic:/workspace/Wikontic:rw
+      # Persist downloaded models to avoid re-downloading
+      - huggingface_cache:/root/.cache/huggingface
+      - torch_cache:/root/.cache/torch
+      # Mount for custom data
+      - ./data:/data:rw
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - MONGO_URI=mongodb://wikontic:wikontic123@mongodb:27018/?directConnection=true
+      - WIKIDATA_ONTOLOGY_DB=wikidata_ontology_dev
+      - TRIPLETS_DB=triplets_db_dev
+      - HF_HOME=/root/.cache/huggingface
+      - TORCH_HOME=/root/.cache/torch
+      - PYTHONPATH=/workspace:/workspace/HippoRAG:/workspace/Wikontic:/workspace/PPR_for_Wikontic
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}  # Optional
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - dev-network
+    # Development command - starts bash, not streamlit directly
+    command: >
+      bash -c "
+        echo '🚀 Development Environment Ready' &&
+        echo '===============================' &&
+        echo 'MongoDB: mongodb://mongodb:27018' &&
+        echo 'Streamlit will be available at http://localhost:8501' &&
+        echo '' &&
+        echo 'Initializing databases (first time only)...' &&
+        python /scripts/init-db.py &&
+        echo '' &&
+        echo 'To start Streamlit, run: streamlit run /workspace/Wikontic/Wikontic.py --server.port=8501 --server.address=0.0.0.0' &&
+        echo 'To start Jupyter, run: jupyter notebook --ip=0.0.0.0 --port=8888 --allow-root' &&
+        echo '' &&
+        echo 'Opening bash shell...' &&
+        exec /bin/bash
+      "
+    stdin_open: true  # Keep STDIN open
+    tty: true         # Allocate pseudo-TTY
+
+networks:
+  dev-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    name: wikontic_mongo_data_dev
+  huggingface_cache:
+    name: wikontic_hf_cache_dev
+  torch_cache:
+    name: wikontic_torch_cache_dev
