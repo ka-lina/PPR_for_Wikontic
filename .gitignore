@@ -7,3 +7,5 @@ hybrid_hipporag_output/
 cache/
 *.json
 hipporag_hybrid/
+Transformers_Qwen_Qwen2.5-3B-Instruct_facebook_contriever/
+llm_cache/

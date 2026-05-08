@@ -1,23 +1,29 @@
 # src/hybrid/wikontic_hipporag.py
 
-import numpy as np
-import igraph as ig
-from typing import List, Dict, Tuple, Optional
-from tqdm import tqdm
+import sys
+sys.path.insert(0, "../HippoRAG")
 
+from hipporag import HippoRAG
 from hipporag.utils.misc_utils import compute_mdhash_id
-from hipporag.utils.embed_utils import retrieve_knn
+from typing import List, Dict, Optional
+import numpy as np
+
+import json
+import re
+import ast
+import numpy as np
+from typing import List, Tuple
 
 
-class WikonticHippoRAG:
+class WikonticHippoRAG(HippoRAG):
     """
-    Builds HippoRAG-style graph from Wikontic's existing database:
-    - Reads refined triplets from MongoDB
-    - Reads passages and passage-entity edges from MongoDB
-    - Builds graph with PPR support
+    Inherits from HippoRAG and uses its retrieve function.
+    Uses EmbeddingStore's public API to access data.
     """
     
-    def __init__(self, triplets_db, embedding_model, config=None):
+    def __init__(self, triplets_db, embedding_model, global_config=None, **kwargs):
+        super().__init__(global_config=global_config, **kwargs)
+        
         self.triplets_db = triplets_db
         self.embedding_model = embedding_model
         
@@ -27,99 +33,24 @@ class WikonticHippoRAG:
         self.passage_edges_collection = triplets_db.get_collection("passage_entity_edges")
         self.entity_aliases_collection = triplets_db.get_collection("entity_aliases")
         
-        # Graph structures
-        self.graph = None
-        self.name_to_idx = {}
-        self.passage_node_keys = []
-        self.entity_node_keys = []
-        self.node_to_node_stats = {}
-        self.ent_node_to_passage_ids = {}
-        
-        # Embeddings (will be loaded)
-        self.passage_embeddings = None
-        self.entity_embeddings = None
-        self.fact_embeddings = None
-        
-        self.ready = False
-        
-    def build_from_database(self, force_rebuild: bool = False):
-        """Build graph from existing database collections"""
+    def index_from_wikontic(self, passages: List[str]):
+        """
+        Build index using Wikontic's refined triplets.
+        Uses EmbeddingStore's public methods exclusively.
+        """
         
         print("="*60)
-        print("Building WikonticHippoRAG Graph")
+        print("Building WikonticHippoRAG Index")
         print("="*60)
         
-        # Step 1: Load all data from MongoDB
-        self._load_entities()
-        self._load_passages()
-        self._load_triplets()
-        self._load_passage_edges()
-        
-        # Step 2: Create embeddings for entities and facts
-        self._create_embeddings()
-        
-        # Step 3: Build graph structure
-        self._build_graph()
-        
-        # Step 4: Add synonymy edges (optional)
-        if self.config.get('add_synonymy_edges', True):
-            self._add_synonymy_edges()
-        
-        # Step 5: Augment graph with nodes and edges
-        self._augment_graph()
-        
-        self.ready = True
-        print(f"Graph built: {self.graph.vcount()} nodes, {self.graph.ecount()} edges")
-        
-        return self.graph
-    
-    def _load_entities(self):
-        """Load entities from entity_aliases collection"""
-        print("Loading entities...")
-        
-        # Get distinct canonical entities
-        entities = self.entity_aliases_collection.distinct("label")
-        self.entity_node_keys = []
-        
-        for entity in entities:
-            if entity and entity.strip():
-                entity_hash = compute_mdhash_id(entity, prefix="entity-")
-                self.entity_node_keys.append({
-                    "name": entity,
-                    "hash": entity_hash,
-                    "type": "entity"
-                })
-        
-        print(f"  Loaded {len(self.entity_node_keys)} entities")
-    
-    def _load_passages(self):
-        """Load passages from passages collection"""
-        print("Loading passages...")
-        
-        passages = list(self.passages_collection.find())
-        self.passage_node_keys = []
-        
-        for passage in passages:
-            passage_hash = passage["passage_id"]
-            self.passage_node_keys.append({
-                "name": passage_hash,
-                "content": passage.get("content", ""),
-                "type": "passage"
-            })
-        
-        print(f"  Loaded {len(self.passage_node_keys)} passages")
-    
-    def _load_triplets(self):
-        """Load refined triplets from triplets collection"""
-        print("Loading refined triplets...")
-        
+        # Step 1: Load refined triplets from Wikontic
+        print("Loading refined triplets from Wikontic...")
         triplets = list(self.triplets_collection.find())
-        self.facts = []
+        print(f"  Loaded {len(triplets)} refined triplets")
         
-        # Create mapping from entity name to hash
-        self.entity_name_to_hash = {}
-        for entity in self.entity_node_keys:
-            self.entity_name_to_hash[entity["name"]] = entity["hash"]
+        # Step 2: Extract entities and facts
+        entity_nodes = set()
+        facts = []
         
         for triplet in triplets:
             subject = triplet.get("subject", "")
@@ -127,272 +58,215 @@ class WikonticHippoRAG:
             obj = triplet.get("object", "")
             
             if subject and obj:
-                subj_hash = self.entity_name_to_hash.get(subject)
-                obj_hash = self.entity_name_to_hash.get(obj)
-                
-                if subj_hash and obj_hash:
-                    self.facts.append({
-                        "subject": subject,
-                        "subject_hash": subj_hash,
-                        "relation": relation,
-                        "object": obj,
-                        "object_hash": obj_hash,
-                        "fact_string": f"({subject}, {relation}, {obj})"
-                    })
+                entity_nodes.add(subject)
+                entity_nodes.add(obj)
+                facts.append((subject, relation, obj))
         
-        print(f"  Loaded {len(self.facts)} refined triplets")
+        print(f"  Extracted {len(entity_nodes)} entities, {len(facts)} facts")
+        
+        # Step 3: Insert passages into chunk_embedding_store
+        print("Inserting passages into chunk_embedding_store...")
+        self.chunk_embedding_store.insert_strings(passages)
+        
+        # Step 4: Insert entities into entity_embedding_store
+        print("Inserting entities into entity_embedding_store...")
+        entity_list = list(entity_nodes)
+        self.entity_embedding_store.insert_strings(entity_list)
+        
+        # Step 5: Insert facts into fact_embedding_store
+        print("Inserting facts into fact_embedding_store...")
+        fact_strings = [f"({s}, {p}, {o})" for s, p, o in facts]
+        self.fact_embedding_store.insert_strings(fact_strings)
+        
+        # Step 6: Build graph using public API to get hash IDs
+        print("Building graph...")
+        self._build_graph_from_wikontic(passages, facts, entity_nodes)
+        
+        # Step 7: Add synonymy edges
+        if hasattr(self.global_config, 'add_synonymy_edges') and self.global_config.add_synonymy_edges:
+            print("Adding synonymy edges...")
+            self.add_synonymy_edges()
+        
+        # Step 8: Augment and save
+        self.augment_graph()
+        self.save_igraph()
+        
+        # Step 9: Prepare for retrieval
+        self.prepare_retrieval_objects()
+        
+        self.ready_to_retrieve = True
+        print(f"Index built: {self.graph.vcount()} nodes, {self.graph.ecount()} edges")
+        
+        return self.graph
     
-    def _load_passage_edges(self):
-        """Load passage-entity edges"""
-        print("Loading passage-entity edges...")
+    def _build_graph_from_wikontic(self, passages: List[str], facts: List[tuple], entity_nodes: set):
+        """Build graph using EmbeddingStore's public API"""
         
-        edges = list(self.passage_edges_collection.find())
-        self.passage_edges = []
+        self.node_to_node_stats = {}
+        self.ent_node_to_chunk_ids = {}
         
-        # Track which passages contain which entities (for IDF weighting)
-        self.entity_passage_count = {}
+        # Get mapping from content to hash ID using get_hash_id method
+        entity_to_hash = {}
+        for entity in entity_nodes:
+            try:
+                # Try to get existing hash ID
+                hash_id = self.entity_embedding_store.get_hash_id(entity)
+                entity_to_hash[entity] = hash_id
+            except:
+                # Create new hash ID if not found
+                entity_to_hash[entity] = compute_mdhash_id(entity, prefix="entity-")
         
-        for edge in edges:
-            passage_id = edge.get("passage_id")
-            entity_name = edge.get("entity_name")
-            
-            if passage_id and entity_name:
-                self.passage_edges.append({
-                    "passage_id": passage_id,
-                    "entity_name": entity_name
-                })
-                
-                # Count passages per entity
-                self.entity_passage_count[entity_name] = self.entity_passage_count.get(entity_name, 0) + 1
-        
-        print(f"  Loaded {len(self.passage_edges)} passage-entity edges")
-    
-    def _create_embeddings(self):
-        """Create embeddings for passages, entities, and facts"""
-        
-        # Passage embeddings
-        print("Creating passage embeddings...")
-        passage_texts = [p["content"] for p in self.passage_node_keys if p.get("content")]
-        if passage_texts:
-            self.passage_embeddings = self.embedding_model.encode(passage_texts)
-        
-        # Entity embeddings
-        print("Creating entity embeddings...")
-        entity_names = [e["name"] for e in self.entity_node_keys]
-        if entity_names:
-            self.entity_embeddings = self.embedding_model.encode(entity_names)
-        
-        # Fact embeddings
-        print("Creating fact embeddings...")
-        fact_strings = [f["fact_string"] for f in self.facts]
-        if fact_strings:
-            self.fact_embeddings = self.embedding_model.encode(fact_strings)
-    
-    def _build_graph(self):
-        """Build igraph from loaded data"""
-        
-        print("Building graph structure...")
-        
-        # Combine all nodes
-        all_nodes = []
-        for entity in self.entity_node_keys:
-            all_nodes.append({
-                "name": entity["hash"],
-                "display_name": entity["name"],
-                "type": "entity"
-            })
-        
-        for passage in self.passage_node_keys:
-            all_nodes.append({
-                "name": passage["name"],
-                "display_name": passage["name"],
-                "type": "passage"
-            })
-        
-        # Create graph
-        self.graph = ig.Graph(directed=False)
-        self.graph.add_vertices(len(all_nodes))
-        self.graph.vs["name"] = [n["name"] for n in all_nodes]
-        self.graph.vs["display_name"] = [n.get("display_name", n["name"]) for n in all_nodes]
-        self.graph.vs["type"] = [n["type"] for n in all_nodes]
-        
-        # Create name to index mapping
-        self.name_to_idx = {n["name"]: i for i, n in enumerate(all_nodes)}
-        
-        # Add edges
-        edges = []
-        weights = []
+        # Get passage hash IDs
+        passage_to_hash = {}
+        for passage in passages:
+            try:
+                hash_id = self.chunk_embedding_store.get_hash_id(passage)
+                passage_to_hash[passage] = hash_id
+            except:
+                passage_to_hash[passage] = compute_mdhash_id(passage, prefix="chunk-")
         
         # Add fact edges (entity-entity)
         print("  Adding fact edges...")
-        total_passages = len(self.passage_node_keys)
-        
-        for fact in tqdm(self.facts):
-            subj_hash = fact["subject_hash"]
-            obj_hash = fact["object_hash"]
+        for subject, relation, obj in facts:
+            subj_hash = entity_to_hash.get(subject)
+            obj_hash = entity_to_hash.get(obj)
             
-            if subj_hash in self.name_to_idx and obj_hash in self.name_to_idx:
-                # IDF weight based on entity frequency
-                subj_count = self.entity_passage_count.get(fact["subject"], 1)
-                obj_count = self.entity_passage_count.get(fact["object"], 1)
-                weight = np.log(total_passages / (min(subj_count, obj_count) + 1))
-                weight = max(0.1, min(weight, 1.0))
-                
-                edges.append((self.name_to_idx[subj_hash], self.name_to_idx[obj_hash]))
-                weights.append(weight)
+            if subj_hash and obj_hash:
+                self.node_to_node_stats[(subj_hash, obj_hash)] = self.node_to_node_stats.get((subj_hash, obj_hash), 0) + 1
+                self.node_to_node_stats[(obj_hash, subj_hash)] = self.node_to_node_stats.get((obj_hash, subj_hash), 0) + 1
         
-        # Add passage-entity edges
+        # Add passage-entity edges using Wikontic's passage_entity_edges
         print("  Adding passage-entity edges...")
-        for edge in tqdm(self.passage_edges):
-            passage_id = edge["passage_id"]
-            entity_name = edge["entity_name"]
-            entity_hash = self.entity_name_to_hash.get(entity_name)
+        for passage in passages:
+            passage_hash = passage_to_hash.get(passage)
+            if not passage_hash:
+                continue
             
-            if passage_id in self.name_to_idx and entity_hash in self.name_to_idx:
-                edges.append((self.name_to_idx[passage_id], self.name_to_idx[entity_hash]))
-                weights.append(1.0)
+            # Find passage in MongoDB by content
+            passage_doc = self.passages_collection.find_one({"content": passage})
+            if passage_doc:
+                passage_id = passage_doc.get("passage_id")
+                edges = self.passage_edges_collection.find({"passage_id": passage_id})
                 
-                # Track entity -> passage mapping for later
-                if entity_hash not in self.ent_node_to_passage_ids:
-                    self.ent_node_to_passage_ids[entity_hash] = set()
-                self.ent_node_to_passage_ids[entity_hash].add(passage_id)
+                for edge in edges:
+                    entity_name = edge.get("entity_name")
+                    entity_hash = entity_to_hash.get(entity_name)
+                    
+                    if entity_hash:
+                        self.node_to_node_stats[(passage_hash, entity_hash)] = 1.0
+                        if entity_hash not in self.ent_node_to_chunk_ids:
+                            self.ent_node_to_chunk_ids[entity_hash] = set()
+                        self.ent_node_to_chunk_ids[entity_hash].add(passage_hash)
         
-        # Add all edges
-        self.graph.add_edges(edges)
-        self.graph.es["weight"] = weights
-        
-        print(f"  Added {len(edges)} edges")
+        print(f"  Added {len(self.node_to_node_stats)} edges")
     
-    def _add_synonymy_edges(self, threshold: float = 0.7, top_k: int = 10):
-        """Add synonymy edges between similar entities (HippoRAG style)"""
+    def retrieve_from_wikontic(self, queries: List[str], num_to_retrieve: int = None):
+        """Use HippoRAG's native retrieve function"""
+        if not self.ready_to_retrieve:
+            raise ValueError("Must call index_from_wikontic() before retrieval")
         
-        if len(self.entity_node_keys) < 2:
-            return
+        return super().retrieve(queries, num_to_retrieve)
+
+    def rerank_facts(self, query: str, query_fact_scores: np.ndarray):
+        """
+        Override to use more robust JSON parsing for local LLMs.
+        """
+        link_top_k = self.global_config.linking_top_k
         
-        print("Adding synonymy edges...")
+        if len(query_fact_scores) == 0 or len(self.fact_node_keys) == 0:
+            return [], [], {'facts_before_rerank': [], 'facts_after_rerank': []}
         
-        entity_names = [e["name"] for e in self.entity_node_keys]
-        entity_hashes = [e["hash"] for e in self.entity_node_keys]
+        # Get top candidate facts (more than needed for reranking)
+        candidate_count = min(link_top_k * 2, len(query_fact_scores))
+        candidate_indices = np.argsort(query_fact_scores)[-candidate_count:][::-1].tolist()
         
-        # Get embeddings for entities
-        embeddings = self.entity_embeddings
+        # Get fact content
+        fact_ids = [self.fact_node_keys[idx] for idx in candidate_indices]
+        fact_rows = self.fact_embedding_store.get_rows(fact_ids)
+        candidate_facts = [eval(fact_rows[fid]['content']) for fid in fact_ids]
         
-        # Find similar entities
-        similar_pairs = retrieve_knn(
-            query_ids=entity_hashes,
-            key_ids=entity_hashes,
-            query_vecs=embeddings,
-            key_vecs=embeddings,
-            k=top_k
-        )
-        
-        synonym_edges = []
-        synonym_weights = []
-        
-        for entity_hash, (similar_hashes, scores) in similar_pairs.items():
-            for sim_hash, score in zip(similar_hashes, scores):
-                if score >= threshold and entity_hash != sim_hash:
-                    if entity_hash in self.name_to_idx and sim_hash in self.name_to_idx:
-                        synonym_edges.append((self.name_to_idx[entity_hash], self.name_to_idx[sim_hash]))
-                        synonym_weights.append(score * 0.3)  # Lower weight than fact edges
-        
-        if synonym_edges:
-            self.graph.add_edges(synonym_edges)
-            self.graph.es[len(self.graph.es) - len(synonym_edges):]["weight"] = synonym_weights
-            print(f"  Added {len(synonym_edges)} synonymy edges")
-    
-    def _augment_graph(self):
-        """Finalize graph (add any remaining nodes/edges)"""
-        # This is a placeholder - add any post-processing here
-        pass
-    
-    def get_query_embedding(self, query: str, mode: str = "fact") -> np.ndarray:
-        """Get query embedding for retrieval"""
-        # You'll need to implement instruction-based embedding
-        # For now, simple encoding
-        return self.embedding_model.encode([query])[0]
-    
-    def retrieve(self, query: str, query_entities: List[str], 
-                 damping: float = 0.5, top_k: int = 20) -> Tuple[List[str], List[float]]:
-        """Retrieve passages using PPR"""
-        
-        if not self.ready:
-            raise ValueError("Graph not built. Call build_from_database() first.")
-        
-        # Initialize reset distribution
-        reset_prob = np.zeros(len(self.graph.vs))
-        
-        # Weight entities
-        entity_hashes = []
-        for entity_name in query_entities:
-            entity_hash = self.entity_name_to_hash.get(entity_name)
-            if entity_hash and entity_hash in self.name_to_idx:
-                entity_hashes.append(entity_hash)
-        
-        if entity_hashes:
-            for entity_hash in entity_hashes:
-                idx = self.name_to_idx[entity_hash]
-                # Weight by inverse passage frequency (rare entities get higher weight)
-                passage_count = self.entity_passage_count.get(
-                    self._get_entity_name_from_hash(entity_hash), 1
-                )
-                weight = 1.0 / passage_count
-                reset_prob[idx] = weight
+        # Rerank with LLM (with robust parsing)
+        try:
+            reranked_facts = self._rerank_with_llm(query, candidate_facts)
             
-            # Normalize
-            if np.sum(reset_prob) > 0:
-                reset_prob = reset_prob / np.sum(reset_prob)
-        else:
-            # Fallback to dense retrieval
-            return self._dense_retrieval(query, top_k)
-        
-        # Run PPR
-        ppr_scores = self.graph.personalized_pagerank(
-            vertices=range(len(self.graph.vs)),
-            damping=damping,
-            directed=False,
-            weights='weight',
-            reset=reset_prob,
-            implementation='prpack'
-        )
-        
-        # Extract passage scores
-        passage_scores = []
-        for passage in self.passage_node_keys:
-            passage_name = passage["name"]
-            if passage_name in self.name_to_idx:
-                idx = self.name_to_idx[passage_name]
-                score = ppr_scores[idx]
-                passage_scores.append((passage_name, score))
-        
-        passage_scores.sort(key=lambda x: x[1], reverse=True)
-        
-        return [p[0] for p in passage_scores[:top_k]], [p[1] for p in passage_scores[:top_k]]
+            # Match back to original indices
+            result_indices = []
+            result_facts = []
+            for rf in reranked_facts:
+                for i, cf in enumerate(candidate_facts):
+                    if self._facts_match(rf, cf):
+                        result_indices.append(candidate_indices[i])
+                        result_facts.append(cf)
+                        break
+            
+            # Take top k
+            return result_indices[:link_top_k], result_facts[:link_top_k], {}
+            
+        except Exception as e:
+            print(f"Reranking failed, using top scores: {e}")
+            # Fall back to top scores
+            return candidate_indices[:link_top_k], candidate_facts[:link_top_k], {'fallback': True}
     
-    def _dense_retrieval(self, query: str, top_k: int) -> Tuple[List[str], List[float]]:
-        """Fallback dense passage retrieval"""
-        query_emb = self.get_query_embedding(query, mode="passage")
+    def _rerank_with_llm(self, query: str, candidate_facts: List[Tuple]) -> List[Tuple]:
+        """Rerank facts using LLM with robust parsing"""
         
-        scores = []
-        for passage in self.passage_node_keys:
-            passage_emb = self._get_passage_embedding(passage["name"])
-            if passage_emb is not None:
-                score = np.dot(query_emb, passage_emb)
-                scores.append((passage["name"], score))
+        # Format facts for prompt
+        facts_str = json.dumps([list(f) for f in candidate_facts], indent=2)
         
-        scores.sort(key=lambda x: x[1], reverse=True)
-        return [s[0] for s in scores[:top_k]], [s[1] for s in scores[:top_k]]
+        prompt = f"""Given the question, select which facts are relevant.
+
+Question: {query}
+
+Facts:
+{facts_str}
+
+Return ONLY the relevant facts as a JSON list of lists. Example: [["subject", "predicate", "object"]]
+
+Relevant facts:"""
+
+        response = self.llm_model.infer(prompt)
+        
+        # Robust parsing
+        return self._parse_fact_response(response, candidate_facts)
     
-    def _get_entity_name_from_hash(self, entity_hash: str) -> str:
-        """Get entity name from hash"""
-        for entity in self.entity_node_keys:
-            if entity["hash"] == entity_hash:
-                return entity["name"]
-        return ""
+    def _parse_fact_response(self, response: str, candidate_facts: List[Tuple]) -> List[Tuple]:
+        """Parse LLM response to extract facts"""
+        
+        # Try different parsing strategies
+        parsed = None
+        
+        # Strategy 1: Find JSON in response
+        json_pattern = r'\[.*\]'
+        match = re.search(json_pattern, response, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+            except:
+                pass
+        
+        # Strategy 2: Try ast.literal_eval
+        if parsed is None:
+            try:
+                parsed = ast.literal_eval(response)
+            except:
+                pass
+        
+        # Strategy 3: Extract by matching with candidates
+        if parsed is None or not isinstance(parsed, list):
+            # Return all candidates (no filtering)
+            return candidate_facts
+        
+        # Convert to tuple format
+        result = []
+        for item in parsed:
+            if isinstance(item, list) and len(item) >= 3:
+                result.append(tuple(item[:3]))
+            elif isinstance(item, dict):
+                result.append((item.get('subject', ''), item.get('predicate', ''), item.get('object', '')))
+        
+        return result if result else candidate_facts
     
-    def _get_passage_embedding(self, passage_id: str) -> Optional[np.ndarray]:
-        """Get passage embedding from store"""
-        passage = self.passages_collection.find_one({"passage_id": passage_id})
-        if passage and "embedding" in passage:
-            return np.array(passage["embedding"])
-        return None
+    def _facts_match(self, fact1: Tuple, fact2: Tuple) -> bool:
+        """Check if two facts are the same (fuzzy matching)"""
+        return all(str(f1).lower().strip() == str(f2).lower().strip() 
+                   for f1, f2 in zip(fact1, fact2))

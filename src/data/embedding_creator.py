@@ -46,6 +46,24 @@ class EmbeddingCreator:
             embeddings = self.mean_pooling(outputs[0], inputs["attention_mask"])
         
         return embeddings.cpu().numpy()
+
+    def batch_encode(self, texts: List[str], instruction: str = None, norm: bool = True) -> np.ndarray:
+        """
+        HippoRAG-compatible batch_encode method.
+        
+        Args:
+            texts: List of strings to encode
+            instruction: Optional instruction text (ignored for now)
+            norm: Whether to normalize embeddings
+        """
+        embeddings = self.encode(texts)
+        
+        if norm:
+            # L2 normalize
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            embeddings = embeddings / (norms + 1e-8)
+        
+        return embeddings
     
     def create_entity_embeddings(self, entities: List[str]) -> Dict[str, np.ndarray]:
         """Create embeddings for canonical entities"""
