@@ -1,2 +1,9 @@
 .venv/
 .env
+__pycache__/
+
+run_hybrid_hipporag.py 
+hybrid_hipporag_output/
+cache/
+*.json
+hipporag_hybrid/
