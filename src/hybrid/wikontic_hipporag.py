@@ -14,6 +14,24 @@ import ast
 import numpy as np
 from typing import List, Tuple
 
+def parse_fact_string(fact_str: str) -> Tuple[str, str, str]:
+    """
+    Parse a fact string like '(VIVA Media GmbH, original name, VIVA Media AG)'
+    into a tuple of strings.
+    """
+    # Remove parentheses and whitespace
+    fact_str = fact_str.strip()
+    if fact_str.startswith('(') and fact_str.endswith(')'):
+        fact_str = fact_str[1:-1]
+    
+    # Split by comma, but don't split inside quotes (there are no quotes)
+    # Simple split works for this format
+    parts = [p.strip() for p in fact_str.split(',')]
+    
+    if len(parts) >= 3:
+        return (parts[0], parts[1], parts[2])
+    return None
+
 
 class WikonticHippoRAG(HippoRAG):
     """
@@ -167,45 +185,143 @@ class WikonticHippoRAG(HippoRAG):
         
         return super().retrieve(queries, num_to_retrieve)
 
-    def rerank_facts(self, query: str, query_fact_scores: np.ndarray):
-        """
-        Override to use more robust JSON parsing for local LLMs.
-        """
-        link_top_k = self.global_config.linking_top_k
+    # def rerank_facts(self, query: str, query_fact_scores: np.ndarray):
+    #     """Override with safe fact parsing and proper entity mapping"""
+    #     link_top_k = self.global_config.linking_top_k
         
-        if len(query_fact_scores) == 0 or len(self.fact_node_keys) == 0:
-            return [], [], {'facts_before_rerank': [], 'facts_after_rerank': []}
+    #     if len(query_fact_scores) == 0 or len(self.fact_node_keys) == 0:
+    #         return [], [], {'facts_before_rerank': [], 'facts_after_rerank': []}
         
-        # Get top candidate facts (more than needed for reranking)
-        candidate_count = min(link_top_k * 2, len(query_fact_scores))
-        candidate_indices = np.argsort(query_fact_scores)[-candidate_count:][::-1].tolist()
+    #     # Get top candidate facts
+    #     candidate_count = min(link_top_k * 2, len(query_fact_scores))
+    #     candidate_indices = np.argsort(query_fact_scores)[-candidate_count:][::-1].tolist()
         
-        # Get fact content
-        fact_ids = [self.fact_node_keys[idx] for idx in candidate_indices]
-        fact_rows = self.fact_embedding_store.get_rows(fact_ids)
-        candidate_facts = [eval(fact_rows[fid]['content']) for fid in fact_ids]
+    #     # Get fact content with safe parsing
+    #     fact_ids = [self.fact_node_keys[idx] for idx in candidate_indices]
+    #     candidate_facts = []
+    #     valid_indices = []
         
-        # Rerank with LLM (with robust parsing)
+    #     for idx, fid in zip(candidate_indices, fact_ids):
+    #         row = self.fact_embedding_store.get_row(fid)
+    #         content = row['content']
+            
+    #         # Parse the fact string
+    #         fact_tuple = self._parse_fact_string(content)
+    #         if fact_tuple:
+    #             subject, predicate, obj = fact_tuple
+    #             # Verify that entities exist in the graph
+    #             subj_exists = self._entity_exists_in_graph(subject)
+    #             obj_exists = self._entity_exists_in_graph(obj)
+                
+    #             if subj_exists and obj_exists:
+    #                 candidate_facts.append(fact_tuple)
+    #                 valid_indices.append(idx)
+    #             else:
+    #                 print(f"  Entity not in graph: subject={subj_exists}, object={obj_exists} for {fact_tuple}")
+        
+    #     if not candidate_facts:
+    #         print("  No valid facts found, returning empty")
+    #         return [], [], {'error': 'No valid facts'}
+        
+    #     # Keep only top_k valid facts
+    #     valid_indices = valid_indices[:link_top_k]
+    #     candidate_facts = candidate_facts[:link_top_k]
+        
+    #     return valid_indices, candidate_facts, {'skip_rerank': True}
+    
+    # def _parse_fact_string(self, fact_str: str) -> tuple:
+    #     """Parse fact string like '(subject, predicate, object)'"""
+    #     try:
+    #         # Remove parentheses
+    #         fact_str = fact_str.strip()
+    #         if fact_str.startswith('(') and fact_str.endswith(')'):
+    #             fact_str = fact_str[1:-1]
+            
+    #         # Split by comma (simple approach for unquoted strings)
+    #         parts = [p.strip() for p in fact_str.split(',')]
+            
+    #         if len(parts) >= 3:
+    #             return (parts[0], parts[1], parts[2])
+    #     except Exception as e:
+    #         print(f"  Parse error: {e}")
+        
+    #     return None
+    
+    def _entity_exists_in_graph(self, entity_name: str) -> bool:
+        """Check if entity exists in the graph"""
         try:
-            reranked_facts = self._rerank_with_llm(query, candidate_facts)
+            # Try to get hash ID from entity embedding store
+            hash_id = self.entity_embedding_store.get_hash_id(entity_name)
+            # Check if it's in the graph nodes
+            return hash_id in self.name_to_idx if hasattr(self, 'name_to_idx') else True
+        except:
+            return False
+
+    # def _build_graph_from_wikontic(self, passages: List[str], facts: List[tuple], entity_nodes: set):
+    #     """Build graph using direct access to triplets collection"""
+        
+    #     self.node_to_node_stats = {}
+    #     self.ent_node_to_chunk_ids = {}
+        
+    #     # Get entity hashes
+    #     entity_to_hash = {}
+    #     for entity in entity_nodes:
+    #         try:
+    #             hash_id = self.entity_embedding_store.get_hash_id(entity)
+    #             entity_to_hash[entity] = hash_id
+    #         except:
+    #             entity_to_hash[entity] = compute_mdhash_id(entity, prefix="entity-")
+        
+    #     # Get passage hashes
+    #     passage_to_hash = {}
+    #     for passage in passages:
+    #         try:
+    #             hash_id = self.chunk_embedding_store.get_hash_id(passage)
+    #             passage_to_hash[passage] = hash_id
+    #         except:
+    #             passage_to_hash[passage] = compute_mdhash_id(passage, prefix="chunk-")
+        
+    #     # Add fact edges - read directly from triplets collection (no parsing!)
+    #     print("  Adding fact edges from triplets collection...")
+    #     triplets = list(self.triplets_collection.find())
+        
+    #     for triplet in triplets:
+    #         subject = triplet.get("subject", "")
+    #         obj = triplet.get("object", "")
             
-            # Match back to original indices
-            result_indices = []
-            result_facts = []
-            for rf in reranked_facts:
-                for i, cf in enumerate(candidate_facts):
-                    if self._facts_match(rf, cf):
-                        result_indices.append(candidate_indices[i])
-                        result_facts.append(cf)
-                        break
+    #         if subject and obj:
+    #             subj_hash = entity_to_hash.get(subject)
+    #             obj_hash = entity_to_hash.get(obj)
+                
+    #             if subj_hash and obj_hash:
+    #                 self.node_to_node_stats[(subj_hash, obj_hash)] = self.node_to_node_stats.get((subj_hash, obj_hash), 0) + 1
+    #                 self.node_to_node_stats[(obj_hash, subj_hash)] = self.node_to_node_stats.get((obj_hash, subj_hash), 0) + 1
+        
+    #     print(f"  Added {len(self.node_to_node_stats)} entity-entity edges")
+        
+    #     # Add passage-entity edges
+    #     print("  Adding passage-entity edges...")
+    #     for passage in passages:
+    #         passage_hash = passage_to_hash.get(passage)
+    #         if not passage_hash:
+    #             continue
             
-            # Take top k
-            return result_indices[:link_top_k], result_facts[:link_top_k], {}
-            
-        except Exception as e:
-            print(f"Reranking failed, using top scores: {e}")
-            # Fall back to top scores
-            return candidate_indices[:link_top_k], candidate_facts[:link_top_k], {'fallback': True}
+    #         passage_doc = self.passages_collection.find_one({"content": passage})
+    #         if passage_doc:
+    #             passage_id = passage_doc.get("passage_id")
+    #             edges = self.passage_edges_collection.find({"passage_id": passage_id})
+                
+    #             for edge in edges:
+    #                 entity_name = edge.get("entity_name")
+    #                 entity_hash = entity_to_hash.get(entity_name)
+                    
+    #                 if entity_hash:
+    #                     self.node_to_node_stats[(passage_hash, entity_hash)] = 1.0
+    #                     if entity_hash not in self.ent_node_to_chunk_ids:
+    #                         self.ent_node_to_chunk_ids[entity_hash] = set()
+    #                     self.ent_node_to_chunk_ids[entity_hash].add(passage_hash)
+        
+    #     print(f"  Total edges: {len(self.node_to_node_stats)}")
     
     def _rerank_with_llm(self, query: str, candidate_facts: List[Tuple]) -> List[Tuple]:
         """Rerank facts using LLM with robust parsing"""
