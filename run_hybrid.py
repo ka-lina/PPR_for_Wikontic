@@ -4,6 +4,7 @@ from src.data.hotpotqa_loader import HotPotQALoader
 from src.hybrid.passage_manager import PassageManager
 from src.hybrid.wikontic_hipporag import WikonticHippoRAG
 from src.data.embedding_creator import EmbeddingCreator
+from src.wikontic_ppr.wikontic_ppr_inference import WikonticPPRInference
 
 from pymongo import MongoClient
 import sys
@@ -24,18 +25,20 @@ def main():
     documents, queries, answers, gold_passage_ids, question_contexts = loader.load()
     
     # Use first question
-    q_idx = 0
+    q_idx = 5
     query = queries[q_idx]
     
     # Get relevant passages for this question
     passages = []
     for i in gold_passage_ids[q_idx]:
-        if i < len(question_contexts[q_idx]):
-            passages.append(question_contexts[q_idx][i])
+        passages.append(documents[i])
+        # if i < len(question_contexts[q_idx]):
+        #     passages.append(question_contexts[q_idx][i])
     
     print(f"Query: {query}")
     print(f"Gold answer: {answers[q_idx]}")
     print(f"Passages: {len(passages)}")
+    print(gold_passage_ids[q_idx])
     
     # 3. Initialize models
     embedding_model = EmbeddingCreator("facebook/contriever")
@@ -46,7 +49,6 @@ def main():
     passage_manager = PassageManager(triplets_db, embedding_model)
     edges_collection = triplets_db.get_collection("passage_entity_edges")
     
-    from src.wikontic_ppr.wikontic_ppr_inference import WikonticPPRInference
     wikontic = WikonticPPRInference(extractor, aligner, triplets_db, embedding_model)
     
     for p_idx, passage in enumerate(passages):
@@ -98,7 +100,8 @@ def main():
     hybrid.index_from_wikontic(passage_texts)
     
     # 6. Retrieve
-    results = hybrid.retrieve_from_wikontic([query], num_to_retrieve=5)
+    results = hybrid.retrieve([query], num_to_retrieve=5)
+    # results = hybrid.retrieve_from_wikontic([query], num_to_retrieve=5)
     
     for result in results:
         print(f"\nQuery: {result.question}")
@@ -106,11 +109,14 @@ def main():
         for i, (doc, score) in enumerate(zip(result.docs[:3], result.doc_scores[:3])):
             print(f"  {i+1}. [{score:.4f}] {doc[:100]}...")
     
-    queries_solutions, all_response_message = hybrid.rag_qa(queries=[query],
+    (queries_solutions, all_response_message, all_metadata, \
+    overall_retrieval_result, overall_qa_results) = hybrid.rag_qa(queries=[query],
                     gold_docs=[passages],
-                    gold_answers=[answers[q_idx]])[-2:]
-    print('queries_solutions', queries_solutions)
-    print('all_response_message', all_response_message)
+                    gold_answers=[answers[q_idx]])
+    print('queries_solutions answers', [qa_result.answer for qa_result in queries_solutions])
+    # print('all_response_message', all_response_message)
+    print('overall_retrieval_result', overall_retrieval_result)
+    print('overall_qa_results', overall_qa_results)
 
 
 if __name__ == "__main__":
