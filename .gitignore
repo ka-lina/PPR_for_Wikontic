@@ -1,5 +1,6 @@
 .venv/
 .env
+.hf_cache/
 __pycache__/
 
 run_hybrid_hipporag.py 

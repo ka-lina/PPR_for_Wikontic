@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def main():
-    mongo_uri = os.environ.get('MONGO_URI', 'mongodb://wikontic:wikontic123@mongodb:27018/?directConnection=true')
+    mongo_uri = os.environ.get('MONGO_URI', 'mongodb://wikontic:wikontic123@mongodb:27017/?authSource=admin&directConnection=true')
     
     # Wait for MongoDB
     logger.info("Waiting for MongoDB...")

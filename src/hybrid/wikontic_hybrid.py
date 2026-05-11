@@ -1,5 +1,7 @@
 # src/hybrid/wikontic_hybrid.py
 
+from typing import List
+
 from src.hybrid.passage_manager import PassageManager
 from src.wikontic_ppr.wikontic_ppr_inference import WikonticPPRInference
 
@@ -11,7 +13,8 @@ class WikonticHybridRetriever(WikonticPPRInference):
     
     def __init__(self, extractor, aligner, triplets_db, ontology_db, 
                  embedding_model, passages_db=None):
-        super().__init__(extractor, aligner, triplets_db, ontology_db, embedding_model)
+        super().__init__(extractor, aligner, triplets_db, embedding_model, passages_db=passages_db)
+        self.ontology_db = ontology_db
         
         # Use separate database or same one
         passages_db = passages_db or triplets_db

@@ -1,19 +1,22 @@
 # Using lowest compatible versions to avoid conflicts
 # Based on torch 2.4.1 (lowest from both repos)
 
-# Core ML/DL (compatible with torch 2.4.1)
-transformers
+# Core ML/DL (match HippoRAG 2.0.0a4)
+torch==2.5.1
+transformers==4.45.2
 accelerate
 
 # APIs and LLMs
-openai
-litellm
+# HippoRAG asks for 1.91.1, but that release is unavailable on PyPI mirrors.
+openai==1.91.0
+litellm==1.73.1
+outlines
 # vllm
 gritlm
 
 # Graph processing
-networkx
-python_igraph
+networkx==3.4.2
+python_igraph==0.11.8
 
 # Web/UI
 streamlit
@@ -23,8 +26,8 @@ pyvis
 pymongo
 
 # Utilities
-tenacity
-tiktoken
+jsonlines
+tiktoken==0.7.0
 nest_asyncio
 numpy
 scipy
@@ -34,7 +37,7 @@ boto3
 python-dotenv
 PyYAML
 unidecode
-pydantic
+pydantic==2.10.4
 tiktoken
 
 # LangChain (compatible versions)
@@ -42,6 +45,4 @@ langchain
 langchain_openai
 
 # Other utilities
-pathlib
-typing
-dataclasses
+# pathlib, typing, and dataclasses are provided by the Python standard library.

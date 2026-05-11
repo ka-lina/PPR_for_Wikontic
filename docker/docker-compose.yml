@@ -1,22 +1,20 @@
-version: '3.8'
-
 services:
   # MongoDB for Wikontic
   mongodb:
-    image: mongodb/mongodb-atlas-local:latest
+    image: mongo:7
     container_name: wikontic-mongodb-dev
     ports:
-      - "27018:27018"  # Expose to host for debugging
+      - "27018:27017"  # Host:container
     volumes:
       - mongodb_data:/data/db  # Persist data between container restarts
     environment:
-      - MONGODB_INITDB_ROOT_USERNAME=wikontic
-      - MONGODB_INITDB_ROOT_PASSWORD=wikontic123
+      - MONGO_INITDB_ROOT_USERNAME=wikontic
+      - MONGO_INITDB_ROOT_PASSWORD=wikontic123
     networks:
       - dev-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--username", "wikontic", "--password", "wikontic123", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,10 +34,7 @@ services:
       - "8888:8888"      # Jupyter (optional)
     volumes:
       # Mount your project directory for live code editing
-      - ${PWD}/..:/workspace/PPR_for_Wikontic:rw
-      # Also mount the repos so you can edit them too
-      - ${PWD}/../HippoRagu:/workspace/HippoRAG:rw
-      - ${PWD}/../Wikontic:/workspace/Wikontic:rw
+      - ..:/workspace/PPR_for_Wikontic:rw
       # Persist downloaded models to avoid re-downloading
       - huggingface_cache:/root/.cache/huggingface
       - torch_cache:/root/.cache/torch
@@ -47,7 +42,7 @@ services:
       - ./data:/data:rw
     environment:
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-      - MONGO_URI=mongodb://wikontic:wikontic123@mongodb:27018/?directConnection=true
+      - MONGO_URI=mongodb://wikontic:wikontic123@mongodb:27017/?authSource=admin&directConnection=true
       - WIKIDATA_ONTOLOGY_DB=wikidata_ontology_dev
       - TRIPLETS_DB=triplets_db_dev
       - HF_HOME=/root/.cache/huggingface
@@ -64,7 +59,7 @@ services:
       bash -c "
         echo '🚀 Development Environment Ready' &&
         echo '===============================' &&
-        echo 'MongoDB: mongodb://mongodb:27018' &&
+        echo 'MongoDB: mongodb://mongodb:27017' &&
         echo 'Streamlit will be available at http://localhost:8501' &&
         echo '' &&
         echo 'Initializing databases (first time only)...' &&

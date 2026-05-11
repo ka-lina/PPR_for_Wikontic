@@ -1,6 +1,7 @@
 # src/data/embedding_creator.py
 
 import sys
+import os
 from pathlib import Path
 from typing import List, Dict, Tuple
 import numpy as np
@@ -20,16 +21,31 @@ from hipporag.utils.embed_utils import retrieve_knn
 
 class EmbeddingCreator:
     def __init__(self, embedding_model_name: str = "facebook/contriever", device: str = "cuda"):
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            device = "cpu"
         self.device = torch.device(device)
         self.model_name = embedding_model_name
+        self.batch_size = int(os.environ.get("EMBEDDING_BATCH_SIZE", "16"))
         self._load_model()
         
     def _load_model(self):
         """Load embedding model (reuse Wikontic's method)"""
         from transformers import AutoTokenizer, AutoModel
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModel.from_pretrained(self.model_name, use_safetensors=True).to(self.device)
+
+        cache_dir = os.environ.get("HF_HOME")
+        local_files_only = os.environ.get("HF_LOCAL_FILES_ONLY", "0") == "1"
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+        )
+        self.model = AutoModel.from_pretrained(
+            self.model_name,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+            use_safetensors=False,
+        ).to(self.device)
+        self.model.eval()
         
     def mean_pooling(self, token_embeddings, mask):
         token_embeddings = token_embeddings.masked_fill(~mask[..., None].bool(), 0.0)
@@ -38,7 +54,7 @@ class EmbeddingCreator:
     
     def encode(self, texts: List[str]) -> np.ndarray:
         """Encode texts to embeddings"""
-        inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+        inputs = self.tokenizer(texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
         with torch.no_grad():
@@ -56,7 +72,14 @@ class EmbeddingCreator:
             instruction: Optional instruction text (ignored for now)
             norm: Whether to normalize embeddings
         """
-        embeddings = self.encode(texts)
+        if not texts:
+            return np.empty((0, 0), dtype=np.float32)
+
+        batches = []
+        for start in range(0, len(texts), self.batch_size):
+            batches.append(self.encode(texts[start:start + self.batch_size]))
+
+        embeddings = np.vstack(batches)
         
         if norm:
             # L2 normalize

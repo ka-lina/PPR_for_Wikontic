@@ -3,7 +3,7 @@
 import sys
 sys.path.insert(0, "../HippoRAG")
 
-from hipporag import HippoRAG
+from hipporag.HippoRAG import HippoRAG
 from hipporag.utils.misc_utils import compute_mdhash_id
 from typing import List, Dict, Optional
 import numpy as np
@@ -31,6 +31,16 @@ def parse_fact_string(fact_str: str) -> Tuple[str, str, str]:
     if len(parts) >= 3:
         return (parts[0], parts[1], parts[2])
     return None
+
+
+def normalize_graph_value(value) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(normalize_graph_value(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
 
 
 class WikonticHippoRAG(HippoRAG):
@@ -71,9 +81,9 @@ class WikonticHippoRAG(HippoRAG):
         facts = []
         
         for triplet in triplets:
-            subject = triplet.get("subject", "")
-            relation = triplet.get("relation", "")
-            obj = triplet.get("object", "")
+            subject = normalize_graph_value(triplet.get("subject", "")).strip()
+            relation = normalize_graph_value(triplet.get("relation", "")).strip()
+            obj = normalize_graph_value(triplet.get("object", "")).strip()
             
             if subject and obj:
                 entity_nodes.add(subject)
@@ -93,7 +103,7 @@ class WikonticHippoRAG(HippoRAG):
         
         # Step 5: Insert facts into fact_embedding_store
         print("Inserting facts into fact_embedding_store...")
-        fact_strings = [f"({s}, {p}, {o})" for s, p, o in facts]
+        fact_strings = [json.dumps([s, p, o], ensure_ascii=False) for s, p, o in facts]
         self.fact_embedding_store.insert_strings(fact_strings)
         
         # Step 6: Build graph using public API to get hash IDs
@@ -167,7 +177,7 @@ class WikonticHippoRAG(HippoRAG):
                 edges = self.passage_edges_collection.find({"passage_id": passage_id})
                 
                 for edge in edges:
-                    entity_name = edge.get("entity_name")
+                    entity_name = normalize_graph_value(edge.get("entity_name")).strip()
                     entity_hash = entity_to_hash.get(entity_name)
                     
                     if entity_hash:
