@@ -1,0 +1,20 @@
+# 1) Build: datasets/hotpotqa200_preprocessed.json via preprocessing/preprocess_dataset.py
+# 2) Run KG: from repo root, python inference_and_eval/dataset_inference.py --config inference_and_eval/configs/hotpot_inference_with_db.yaml
+# 3) Eval: see qa_eval_hotpot.py (--triplets_db_name must match constructed DB, e.g. triplets_db_gpt-4o-mini_non_onto)
+# Те же переменные, что в PPR (run_hybrid / run_wikontic_baseline), например локально:
+#   export MONGO_URI='mongodb://wikontic:wikontic123@localhost:27018/?authSource=admin&directConnection=true'
+#   export LLM_BASE_URL='http://127.0.0.1:11434/v1'
+#   export LLM_MODEL='qwen2.5:3b'
+#   unset OPENAI_API_KEY   # или оставить пустым — для localhost подставится ключ-заглушка
+# model_name ниже перекрывается LLM_MODEL; URI LLM — сначала LLM_BASE_URL, затем OPENAI_BASE_URL.
+mongo_uri: "mongodb://localhost:27018/?directConnection=true"
+ontology_db_name: "wikidata_ontology"
+triplets_db_name: "triplets_db"
+model_name: "gpt-4o-mini"
+dataset_path: "datasets/hotpotqa200_preprocessed.json"
+sample_start_index: 0
+num_samples: 200
+structured_inference: false
+proxy_env_var: null
+base_url_env_var: "OPENAI_BASE_URL"
+api_key_env_var: "OPENAI_API_KEY"
